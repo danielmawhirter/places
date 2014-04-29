@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">Important Places Logger</string>
+    <string name="action_settings">Settings</string>
+    <string name="hello_world">Hello world!</string>
+    <string name="id_label">Current Cell ID:</string>
+    <string name="unknown">Unavailable</string>
+    <string name="type_home">Home</string>
+    <string name="type_work">Work</string>
+    <string name="type_other">Other</string>
+    <string name="log_prompt">Log this place as:</string>
+    <string name="log_action">Log now</string>
+    <string name="remaining">Days remaining in study:</string>
+    <string name="export_action">Export and Email</string>
+
+</resources>
