@@ -3,8 +3,13 @@ package edu.mines.toilers.places;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.security.KeyFactory;
+import java.security.PublicKey;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Map;
 
@@ -40,6 +45,8 @@ public class MainActivity extends Activity {
 	public static final String PREFS_NAME = "LogFile";
 	public static final String START_PREFS = "StartFile";
 	public static final String OUTPUT_NAME = "Important_Places_Log.txt";
+	public static final String KEY_FILE_NAME = "Encrypted_AES_Key.txt";
+	public static final int STUDY_DURATION = 30;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -54,7 +61,7 @@ public class MainActivity extends Activity {
 		}
 		setContentView(R.layout.activity_main);
 		TextView timeField = (TextView) findViewById(R.id.textView5);
-		timeField.setText(Math.max(start_prefs.getInt("START", -99) + 30
+		timeField.setText(Math.max(start_prefs.getInt("START", -99) + STUDY_DURATION
 				- Calendar.getInstance().get(Calendar.DAY_OF_YEAR), 0)
 				+ ""); // days remaining
 		TextView idField = (TextView) findViewById(R.id.textView1);
@@ -108,15 +115,14 @@ public class MainActivity extends Activity {
 	}
 
 	public void onExport(View view) {
-
 		SharedPreferences start_prefs = getSharedPreferences(START_PREFS, 0);
-		int daysRemaining = Math.max(start_prefs.getInt("START", -99) + 30
-				- Calendar.getInstance().get(Calendar.DAY_OF_YEAR), 0);
+		int daysRemaining = start_prefs.getInt("START", -99) + STUDY_DURATION
+				- Calendar.getInstance().get(Calendar.DAY_OF_YEAR);
 		if (daysRemaining > 0) {
 			Toast.makeText(getApplicationContext(),
 					"Can't export until research period has completed",
-					Toast.LENGTH_SHORT).show(); 
-			// return;
+					Toast.LENGTH_SHORT).show();
+			return;
 		}
 
 		if (!isExternalStorageWritable()) {
@@ -126,28 +132,47 @@ public class MainActivity extends Activity {
 			return;
 		}
 		SharedPreferences prefs = getSharedPreferences(PREFS_NAME, 0);
-		Map<String, ?> data = prefs.getAll();
 		File root = android.os.Environment.getExternalStorageDirectory();
 		root.mkdirs();
 		File file = new File(root, OUTPUT_NAME);
+		File keyFile = new File(root, KEY_FILE_NAME);
+		prefsToFile(prefs, file, keyFile);
+
+		// Send Email
+		Intent sharingIntent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+		sharingIntent.setType("vnd.android.cursor.dir/email");
+		String to[] = { "daniel@mawhirter.com" };
+		ArrayList<Uri> uris = new ArrayList<Uri>();
+		uris.add(Uri.fromFile(file));
+		uris.add(Uri.fromFile(keyFile));
+		sharingIntent.putExtra(Intent.EXTRA_EMAIL, to);
+		sharingIntent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+		sharingIntent.putExtra(Intent.EXTRA_SUBJECT, "subject");
+		// sharingIntent.putExtra(Intent.EXTRA_TEXT, new String(aesKey));
+		startActivity(Intent.createChooser(sharingIntent, "Send email"));
+
+		finish();
+	}
+
+	private void prefsToFile(SharedPreferences prefs, File file, File keyFile) {
+		Map<String, ?> data = prefs.getAll();
 		try {
 			KeyGenerator kgen = KeyGenerator.getInstance("AES");
 			kgen.init(128);
 			SecretKey key = kgen.generateKey();
 			byte[] aesKey = key.getEncoded();
 			SecretKeySpec aeskeySpec = new SecretKeySpec(aesKey, "AES");
-			Cipher myCipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
-			myCipher.init(Cipher.ENCRYPT_MODE, aeskeySpec);
-
+			Cipher secretCipher = Cipher.getInstance("AES");
+			secretCipher.init(Cipher.ENCRYPT_MODE, aeskeySpec);
 			FileOutputStream f = new FileOutputStream(file);
-			Thread.sleep(100);
-			CipherOutputStream cos = new CipherOutputStream(f, myCipher);
+			CipherOutputStream cos = new CipherOutputStream(f, secretCipher);
 			PrintWriter pw = new PrintWriter(cos);
 			for (String s : data.keySet()) {
-				pw.println(s
+				String write = s
 						+ ","
 						+ ((String) data.get(s)).replace("Home", "0")
-								.replace("Work", "1").replace("Other", "2"));
+								.replace("Work", "1").replace("Other", "2");
+				pw.println(write);
 			}
 			pw.flush();
 			pw.close();
@@ -155,17 +180,25 @@ public class MainActivity extends Activity {
 			Toast.makeText(getApplicationContext(),
 					"Data exported to " + OUTPUT_NAME + " on external storage",
 					Toast.LENGTH_SHORT).show();
-			// Send Email
-			Intent sharingIntent = new Intent(Intent.ACTION_SEND);
-			sharingIntent.setType("vnd.android.cursor.dir/email");
-			String to[] = { "daniel@mawhirter.com" };
-			sharingIntent.putExtra(Intent.EXTRA_EMAIL, to);
-			sharingIntent.putExtra(Intent.EXTRA_STREAM, Uri.fromFile(file));
-			sharingIntent.putExtra(Intent.EXTRA_SUBJECT, "subject");
-			sharingIntent.putExtra(Intent.EXTRA_TEXT, new String(aesKey));
-			startActivity(Intent.createChooser(sharingIntent, "Send email"));
-			finish();
+
+			Cipher pkCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+			InputStream pkeyStream = getResources().openRawResource(R.raw.pkey);
+			byte[] encodedKey = new byte[294];
+			pkeyStream.read(encodedKey);
+			pkeyStream.close();
+			X509EncodedKeySpec publicKeySpec = new X509EncodedKeySpec(
+					encodedKey);
+			KeyFactory kf = KeyFactory.getInstance("RSA");
+			PublicKey pk = kf.generatePublic(publicKeySpec);
+			pkCipher.init(Cipher.ENCRYPT_MODE, pk);
+			//FileOutputStream os = new FileOutputStream(keyFile);
+			CipherOutputStream os = new CipherOutputStream(
+					new FileOutputStream(keyFile), pkCipher);
+			os.write(aesKey); // write the aes key to file using the rsa key
+			os.close();
 		} catch (Exception e) {
+			Toast.makeText(getApplicationContext(), e.toString(),
+					Toast.LENGTH_LONG).show();
 			logException(e);
 		}
 	}
@@ -215,6 +248,6 @@ public class MainActivity extends Activity {
 		ByteArrayOutputStream logger = new ByteArrayOutputStream();
 		PrintStream ps = new PrintStream(logger);
 		e.printStackTrace(ps);
-		Log.e("edu.mines.toilers.places", logger.toString());
+		Log.e("exception encountered", logger.toString());
 	}
 }
